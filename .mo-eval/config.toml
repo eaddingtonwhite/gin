@@ -1,0 +1,15 @@
+# What this repository declares to mo-eval. Two lines make it mineable; the rest is deliberate.
+language = "go"
+
+# The allow-list: work orders supply ARGUMENTS to this and can never supply a command of their own.
+test_command = "go test"
+
+# Pull requests are mined from upstream; a fork's own PR list is empty, but its history holds every
+# upstream merge commit, and the trees are exported from this clone.
+repo = "gin-gonic/gin"
+
+# The image a containerized agent run executes in, pinned by digest. A mutable tag is refused.
+worker_image = "golang:1.25-bookworm@sha256:3b4a11519ad929d1e1d261a12cff056f0c85b735253d7d861346b9c6f8b36437"
+
+# No setup_command: `go test` builds from source. No forward_env: gin's tests are hermetic.
+forward_env = []

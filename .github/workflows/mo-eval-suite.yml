@@ -1,0 +1,61 @@
+# Build or refresh this repository's generated eval suite. On demand, or on a schedule.
+#
+# Everything the job does is driven by work orders the service sends; nothing about how tasks are
+# built lives here. The runner is vendored at .mo-eval/runner (standard-library Python: nothing to
+# install), and this file is the same for every repository — only the toolchain step is yours.
+name: mo-eval suite
+
+on:
+  workflow_dispatch:
+    inputs:
+      history:
+        description: Merged pull requests to offer as candidates
+        default: "300"
+      candidates:
+        description: How many to request source for
+        default: "12"
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # the miner exports trees at older commits; a shallow clone does not have them
+
+      # Whatever this repository's own CI does to become buildable belongs here, unchanged. That is
+      # the whole reason validation runs in your CI and not on our hardware.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: mine and validate
+        run: python3 .mo-eval/runner/main.py suite --service "$MO_EVAL_SERVICE" --history "${{ inputs.history }}" --candidates "${{ inputs.candidates }}" --out .mo-eval/out
+        env:
+          MO_EVAL_SERVICE: ${{ vars.MO_EVAL_SERVICE }}
+          MO_EVAL_TOKEN: ${{ secrets.MO_EVAL_TOKEN }}
+          GH_TOKEN: ${{ github.token }}   # `gh pr list` reads this repository's merged pull requests
+          # Everything named in .mo-eval/config.toml's forward_env must be present here. A repository
+          # whose tests are hermetic — gin's are — names nothing.
+
+      - name: what crossed the boundary, and what survived
+        if: always()
+        run: |
+          echo '## mo-eval suite' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          ls -la .mo-eval/out/wire >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          for meta in .mo-eval/out/tasks/*/meta.json; do
+            [ -f "$meta" ] && python3 -c "import json,sys; m=json.load(open(sys.argv[1])); print(f\"- **{m['title']}** — {len(m['generated']['test_names'])} test(s), validated={m['generated']['validated']}\")" "$meta" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mo-eval-suite
+          path: .mo-eval/out
+          retention-days: 30
