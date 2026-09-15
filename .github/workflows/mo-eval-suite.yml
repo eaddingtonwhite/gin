@@ -49,9 +49,15 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           ls -la .mo-eval/out/wire >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+          # An empty suite is a result to show, not a reason for this step to fail: under `set -e`
+          # an unmatched glob would otherwise end the job here with nothing written.
+          shopt -s nullglob
+          count=0
           for meta in .mo-eval/out/tasks/*/meta.json; do
-            [ -f "$meta" ] && python3 -c "import json,sys; m=json.load(open(sys.argv[1])); print(f\"- **{m['title']}** — {len(m['generated']['test_names'])} test(s), validated={m['generated']['validated']}\")" "$meta" >> "$GITHUB_STEP_SUMMARY"
+            python3 -c "import json,sys; m=json.load(open(sys.argv[1])); print(f\"- **{m['title']}** — {len(m['generated']['test_names'])} test(s), validated={m['generated']['validated']}\")" "$meta" >> "$GITHUB_STEP_SUMMARY"
+            count=$((count + 1))
           done
+          [ "$count" -gt 0 ] || echo '_no task survived validation — see the funnel in the job log_' >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
         if: always()

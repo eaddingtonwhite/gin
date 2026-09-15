@@ -135,6 +135,7 @@ class Runner:
         if archive.wait() != 0 or extract.returncode != 0:
             raise OrderError(f"could not export {step.commit}: {extract.stderr[-400:]}")
         _freshen(workspace)
+        _own_repository(workspace)
 
     def _setup(self, step: Step, workspace: Path, started: float) -> StepResult:
         """Make the exported checkout testable, using the command the REPOSITORY declared.
@@ -217,6 +218,19 @@ class Runner:
             duration_seconds=round(time.monotonic() - started, 2),
             output_tail=tail,
         )
+
+
+def _own_repository(workspace: Path) -> None:
+    """Make an exported tree its own Git repository, so `git apply` resolves paths against IT.
+
+    Run inside a repository, `git apply` takes patch paths relative to that repository's root and
+    silently ignores any that fall outside the current directory — exit 0, nothing applied. A
+    workspace under `.mo-eval/out/` inside a customer's checkout is exactly that case: on GitHub
+    Actions every scaffold "applied" with exit 0 and every graded test was then "not found" at the
+    start state, which the judge read as "already passes". An empty repository in the workspace
+    stops discovery at the workspace boundary.
+    """
+    subprocess.run(["git", "init", "-q"], cwd=workspace, check=True, capture_output=True)
 
 
 def _freshen(workspace: Path) -> None:

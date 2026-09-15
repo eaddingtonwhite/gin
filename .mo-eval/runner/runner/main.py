@@ -62,6 +62,10 @@ def write_local_suite(package: TaskPackage, repo: Path, into: Path) -> Path | No
     archive.wait()
     for path in root.rglob("*"):
         os.utime(path, None)
+    git = ["git", "-c", "user.email=mo-eval@example.invalid", "-c", "user.name=mo-eval"]
+    # Initialized BEFORE the scaffold is applied: inside a customer's checkout, `git apply` would
+    # otherwise resolve the patch against the enclosing repository and silently apply nothing.
+    subprocess.run([*git, "init", "-q"], cwd=root, check=True)
     (root / ".mo-eval-scaffold.patch").write_text(package.files["scaffold.patch"])
     subprocess.run(["git", "apply", "--whitespace=nowarn", ".mo-eval-scaffold.patch"], cwd=root, check=True)
     (root / ".mo-eval-scaffold.patch").unlink()
@@ -70,8 +74,6 @@ def write_local_suite(package: TaskPackage, repo: Path, into: Path) -> Path | No
         target = root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content)
-    git = ["git", "-c", "user.email=mo-eval@example.invalid", "-c", "user.name=mo-eval"]
-    subprocess.run([*git, "init", "-q"], cwd=root, check=True)
     subprocess.run([*git, "add", "-A"], cwd=root, check=True)
     for artifact in _offline_artifacts(meta):
         if (root / artifact).exists():
