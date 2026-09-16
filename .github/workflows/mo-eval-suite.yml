@@ -1,8 +1,8 @@
-# Build or refresh this repository's generated eval suite. On demand, or on a schedule.
+# Build or refresh this repository's generated eval suite, and hand it to the service to run.
 #
 # Everything the job does is driven by work orders the service sends; nothing about how tasks are
-# built lives here. The runner is vendored at .mo-eval/runner (standard-library Python: nothing to
-# install), and this file is the same for every repository — only the toolchain step is yours.
+# built lives here. The runner arrives with the published Action, so this repository keeps only this
+# file and .mo-eval/config.toml — and only the toolchain step is yours.
 name: mo-eval suite
 
 on:
@@ -36,44 +36,10 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: mine and validate
-        # A block scalar: a folded plain scalar would turn the line continuation into a literal
-        # backslash-space, and the arms would reach the runner as one unrecognized argument.
-        run: |
-          python3 .mo-eval/runner/main.py suite --service "$MO_EVAL_SERVICE" \
-            --history "${{ inputs.history }}" --candidates "${{ inputs.candidates }}" --out .mo-eval/out \
-            ${{ inputs.arms != 'none' && format('--run {0}', inputs.arms) || '' }}
-        env:
-          MO_EVAL_SERVICE: ${{ vars.MO_EVAL_SERVICE }}
-          MO_EVAL_TOKEN: ${{ secrets.MO_EVAL_TOKEN }}
-          GH_TOKEN: ${{ github.token }}   # `gh pr list` reads this repository's merged pull requests
-          # Everything named in .mo-eval/config.toml's forward_env must be present here. A repository
-          # whose tests are hermetic — gin's are — names nothing.
-
-      - name: what crossed the boundary, and what survived
-        if: always()
-        run: |
-          echo '## mo-eval suite' >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          ls -la .mo-eval/out/wire >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          # An empty suite is a result to show, not a reason for this step to fail: under `set -e`
-          # an unmatched glob would otherwise end the job here with nothing written.
-          shopt -s nullglob
-          count=0
-          for meta in .mo-eval/out/tasks/*/meta.json; do
-            python3 -c "import json,sys; m=json.load(open(sys.argv[1])); print(f\"- **{m['title']}** — {len(m['generated']['test_names'])} test(s), validated={m['generated']['validated']}\")" "$meta" >> "$GITHUB_STEP_SUMMARY"
-            count=$((count + 1))
-          done
-          [ "$count" -gt 0 ] || echo '_no task survived validation — see the funnel in the job log_' >> "$GITHUB_STEP_SUMMARY"
-
-      - uses: actions/upload-artifact@v4
-        if: always()
+      - uses: momentohq/mo-eval-action@v1
         with:
-          name: mo-eval-suite
-          # The task packages and the audit log of every crossing — what was mined, and what left the
-          # runner. The runnable bundles go to the service directly and are not kept here.
-          path: |
-            .mo-eval/out/tasks
-            .mo-eval/out/wire
-          retention-days: 30
+          service: ${{ vars.MO_EVAL_SERVICE }}
+          token: ${{ secrets.MO_EVAL_TOKEN }}
+          history: ${{ inputs.history }}
+          candidates: ${{ inputs.candidates }}
+          arms: ${{ inputs.arms }}
