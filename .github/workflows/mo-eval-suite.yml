@@ -1,44 +1,24 @@
-# Build or refresh this repository's generated eval suite, and hand it to the service to run.
-#
-# Everything the job does is driven by work orders the service sends; nothing about how tasks are
-# built lives here. The runner arrives with the published Action, so this repository keeps only this
-# file and .mo-eval/config.toml — and only the toolchain step is yours.
 name: mo-eval suite
-
 on:
   workflow_dispatch:
     inputs:
-      history:
-        description: Merged pull requests to offer as candidates
-        default: "300"
-      candidates:
-        description: How many to request source for
-        default: "12"
       arms:
-        description: Model routes to evaluate the suite on, space-separated; "none" builds the suite without running it
+        description: Models to evaluate, space-separated ("none" = build the suite only)
         default: "anthropic/claude-opus-5 momento/zai-org/GLM-5.3"
-
 permissions:
   contents: read
   pull-requests: read
-
 jobs:
   suite:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # the miner exports trees at older commits; a shallow clone does not have them
-
-      # Whatever this repository's own CI does to become buildable belongs here, unchanged. That is
-      # the whole reason validation runs in your CI and not on our hardware.
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-
       - uses: momentohq/mo-eval-action@v1
         with:
           token: ${{ secrets.MO_EVAL_TOKEN }}
-          history: ${{ inputs.history }}
-          candidates: ${{ inputs.candidates }}
           arms: ${{ inputs.arms }}
