@@ -421,3 +421,59 @@ def change_source(repo: Path, facts: RepoFacts, change_ids: list[str]) -> list[C
         ]
         sources.append(ChangeSource(change_id=change_id, files=files, prose=_prose(repo, change_id)))
     return sources
+
+
+# --- conventions: what the repository says about how code should look ---------------------------
+
+_CONVENTION_FILES = (
+    "CONTRIBUTING.md", ".github/CONTRIBUTING.md", ".github/PULL_REQUEST_TEMPLATE.md", "PULL_REQUEST_TEMPLATE.md",
+    "AGENTS.md", "CLAUDE.md", ".editorconfig",
+    ".golangci.yml", ".golangci.yaml", "rustfmt.toml", ".rustfmt.toml", "clippy.toml", "ruff.toml", ".ruff.toml",
+    "setup.cfg", ".flake8", ".eslintrc.json", ".eslintrc.js", "eslint.config.js", ".prettierrc", "biome.json",
+    ".swiftlint.yml", "detekt.yml", ".scalafmt.conf", "analysis_options.yaml", ".rubocop.yml", "phpcs.xml",
+)
+_CONVENTION_FILE_CAP = 24_000
+"""Bytes per file. Enough for any contributing guide; a 70 KB user manual is not a convention."""
+_COMMENT_CAP = 400
+
+
+def convention_files(repo: Path) -> dict[str, str]:
+    """The repository's written rules, by path: contributing guide, PR template, agent instructions,
+    lint and format configuration. Only files that exist and are not enormous."""
+    found: dict[str, str] = {}
+    for name in _CONVENTION_FILES:
+        path = repo / name
+        if path.is_file() and path.stat().st_size <= _CONVENTION_FILE_CAP:
+            try:
+                found[name] = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+    return found
+
+
+def review_comments(repo: Path, repo_name: str, numbers: list[int], limit: int = 400) -> list[dict]:
+    """Inline review comments people left on merged pull requests — the conventions of this
+    repository stated where they mattered. Bots are dropped (their comments are generic and dwarf
+    the humans'), as are acknowledgements too short to carry a rule."""
+    collected: list[dict] = []
+    for number in numbers:
+        try:
+            out = subprocess.run(
+                ["gh", "api", f"repos/{repo_name}/pulls/{number}/comments", "--paginate",
+                 "--jq", '.[] | select(.user.type == "User") | {path, body, author: .user.login} | @json'],
+                cwd=repo, capture_output=True, text=True, timeout=60, check=True,
+            ).stdout
+        except (subprocess.SubprocessError, OSError):
+            continue
+        for line in out.splitlines():
+            if not line.strip():
+                continue
+            comment = json.loads(line)
+            body = " ".join((comment.get("body") or "").split())
+            if len(body) < 40 or body.lower().startswith(("done", "thanks", "thank you", "ok", "lgtm", "@")):
+                continue
+            collected.append({"number": number, "path": comment.get("path") or "", "author": comment["author"],
+                              "body": body[:_COMMENT_CAP]})
+            if len(collected) >= limit:
+                return collected
+    return collected

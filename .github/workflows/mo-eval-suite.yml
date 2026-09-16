@@ -14,6 +14,9 @@ on:
       candidates:
         description: How many to request source for
         default: "12"
+      arms:
+        description: Model routes to evaluate the suite on, space-separated (empty = build only)
+        default: "anthropic/claude-opus-5 momento/zai-org/GLM-5.3"
 
 permissions:
   contents: read
@@ -34,7 +37,8 @@ jobs:
           go-version-file: go.mod
 
       - name: mine and validate
-        run: python3 .mo-eval/runner/main.py suite --service "$MO_EVAL_SERVICE" --history "${{ inputs.history }}" --candidates "${{ inputs.candidates }}" --out .mo-eval/out
+        run: python3 .mo-eval/runner/main.py suite --service "$MO_EVAL_SERVICE" --history "${{ inputs.history }}" --candidates "${{ inputs.candidates }}" --out .mo-eval/out \
+            ${{ inputs.arms && format('--run {0}', inputs.arms) || '' }}
         env:
           MO_EVAL_SERVICE: ${{ vars.MO_EVAL_SERVICE }}
           MO_EVAL_TOKEN: ${{ secrets.MO_EVAL_TOKEN }}
@@ -63,5 +67,9 @@ jobs:
         if: always()
         with:
           name: mo-eval-suite
-          path: .mo-eval/out
+          # The task packages and the audit log of every crossing — what was mined, and what left the
+          # runner. The runnable bundles go to the service directly and are not kept here.
+          path: |
+            .mo-eval/out/tasks
+            .mo-eval/out/wire
           retention-days: 30

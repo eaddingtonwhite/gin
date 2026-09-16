@@ -13,7 +13,8 @@ import urllib.error
 import urllib.request
 from typing import Any, Protocol
 
-from wire import ChangeSource, OrderResult, OrdersResponse, RepoFacts, SourceRequest, VerdictReport, from_json, to_json
+from wire import (ChangeSource, OrderResult, OrdersResponse, RepoFacts, RunRequest, RunTicket, SourceRequest,
+                  UploadRequest, UploadTargets, VerdictReport, from_json, to_json)
 
 
 class ServiceError(RuntimeError):
@@ -24,6 +25,8 @@ class ServiceClient(Protocol):
     def select(self, facts: RepoFacts, limit: int) -> SourceRequest: ...
     def orders(self, facts: RepoFacts, sources: list[ChangeSource], limit: int) -> OrdersResponse: ...
     def verdicts(self, results: list[OrderResult]) -> VerdictReport: ...
+    def uploads(self, request: UploadRequest) -> UploadTargets: ...
+    def runs(self, request: RunRequest) -> RunTicket: ...
 
 
 class LocalService:
@@ -52,6 +55,12 @@ class LocalService:
 
     def verdicts(self, results: list[OrderResult]) -> VerdictReport:
         return from_json(VerdictReport, self._call("/v1/verdicts", {"results": to_json(results)}))
+
+    def uploads(self, request: UploadRequest) -> UploadTargets:
+        return from_json(UploadTargets, self._call("/v1/uploads", to_json(request)))
+
+    def runs(self, request: RunRequest) -> RunTicket:
+        return from_json(RunTicket, self._call("/v1/runs", to_json(request)))
 
 
 class HttpService:
@@ -87,6 +96,12 @@ class HttpService:
 
     def verdicts(self, results: list[OrderResult]) -> VerdictReport:
         return from_json(VerdictReport, self._call("/v1/verdicts", {"results": to_json(results)}))
+
+    def uploads(self, request: UploadRequest) -> UploadTargets:
+        return from_json(UploadTargets, self._call("/v1/uploads", to_json(request)))
+
+    def runs(self, request: RunRequest) -> RunTicket:
+        return from_json(RunTicket, self._call("/v1/runs", to_json(request)))
 
 
 def client_for(service: str, token: str | None) -> ServiceClient:

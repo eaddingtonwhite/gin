@@ -29,7 +29,7 @@ from runner.client import ServiceError, client_for  # noqa: E402
 from runner.collect import change_source, repo_facts  # noqa: E402
 from runner.config import CONFIG_PATH, ConfigError, load_config, probe_environment  # noqa: E402
 from runner.execute import Runner  # noqa: E402
-from wire import TaskPackage, VerdictReport, Wire  # noqa: E402
+from wire import ConventionSources, ReviewComment, RunRequest, TaskPackage, UploadRequest, VerdictReport, Wire  # noqa: E402
 
 
 def write_package(package: TaskPackage, into: Path) -> Path:
@@ -215,7 +215,87 @@ def suite(arguments: argparse.Namespace) -> int:
                 print(f"             local-suite bundle → {bundle}")
 
     _funnel(facts, request, response, len(orders), report, written)
+    if written and arguments.run:
+        conventions = _conventions(repo, facts.repo, min(arguments.history, 120))
+        _hand_off(client, facts.repo, out, arguments.run, arguments.repeats, conventions)
     return 0 if written else 3
+
+
+def submit(arguments) -> int:
+    """Hand an already-validated `--out` tree to the service for evaluation."""
+    client = client_for(arguments.service, arguments.token or os.environ.get("MO_EVAL_TOKEN"))
+    conventions = None
+    if arguments.conventions_from is not None:
+        conventions = _conventions(Path(arguments.conventions_from), arguments.repo_name, arguments.history)
+    _hand_off(client, arguments.repo_name, Path(arguments.out), arguments.run, arguments.repeats, conventions)
+    return 0
+
+
+def _conventions(repo: Path, repo_name: str, history: int) -> ConventionSources:
+    """Collect what the conventions judge learns from. Review comments come from the most recently
+    merged pull requests, not only the mined ones: a convention is stated wherever it was violated."""
+    from runner.collect import convention_files, review_comments  # noqa: PLC0415
+    numbers = _recent_merged(repo, repo_name, history)
+    comments = [ReviewComment(**c) for c in review_comments(repo, repo_name, numbers)]
+    files = convention_files(repo)
+    print(f"  conventions: {len(files)} file(s), {len(comments)} review comment(s) from {len(numbers)} merged PRs")
+    return ConventionSources(files=files, comments=comments)
+
+
+def _recent_merged(repo: Path, repo_name: str, limit: int) -> list[int]:
+    try:
+        out = subprocess.run(
+            ["gh", "pr", "list", "-R", repo_name, "--state", "merged", "--limit", str(limit), "--json", "number",
+             "--jq", ".[].number"],
+            cwd=repo, capture_output=True, text=True, timeout=120, check=True,
+        ).stdout
+    except (subprocess.SubprocessError, OSError):
+        return []
+    return [int(n) for n in out.split()]
+
+
+def _hand_off(client, repo_name: str, out: Path, routes: list[str], repeats: int,
+              conventions: ConventionSources | None = None) -> None:
+    """Upload every validated bundle to the service's storage and record a run for the lane.
+
+    The bundles are tarred here and PUT to presigned URLs, so the service never receives the bytes
+    (a bundle is a vendored start tree — far larger than a function is willing to carry). What is
+    left on GitHub's side afterwards is nothing: the agent runs, the gateway key, and the spend all
+    live on the service's side.
+    """
+    import io, tarfile, urllib.request, time
+    suite_dir = out / "local-suite"
+    bundles = sorted(p for p in suite_dir.iterdir() if p.is_dir()) if suite_dir.is_dir() else []
+    if not bundles:
+        print("  nothing to hand off: no local-suite bundles (does the config declare worker_image?)")
+        return
+    task_ids = [p.name for p in bundles]
+    suite_id = f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{task_ids[0][-8:]}"
+    targets = client.uploads(UploadRequest(repo=repo_name, suite_id=suite_id, task_ids=task_ids))
+    print(f"\n  uploading {len(task_ids)} bundle(s) for suite {suite_id}")
+    for bundle in bundles:
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+            tar.add(bundle, arcname=bundle.name)
+        data = buffer.getvalue()
+        url = targets.urls[bundle.name]
+        if url.startswith("file://"):
+            Path(url[7:]).parent.mkdir(parents=True, exist_ok=True); Path(url[7:]).write_bytes(data)
+        elif url.startswith("memory://"):
+            pass
+        else:
+            req = urllib.request.Request(url, data=data, method="PUT", headers={"content-type": "application/gzip"})
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                resp.read()
+        print(f"    {bundle.name}  {len(data)/1e6:.1f} MB")
+    titles = {}
+    for task_id in task_ids:
+        meta = out / "tasks" / task_id / "meta.json"
+        if meta.is_file():
+            titles[task_id] = json.loads(meta.read_text()).get("title", "")
+    ticket = client.runs(RunRequest(repo=repo_name, suite_id=suite_id, task_ids=task_ids, arms=routes, repeats=repeats,
+                                    titles=titles, conventions=conventions))
+    print(f"  run {ticket.run_id} recorded ({ticket.job_key}); results will appear under {ticket.results_prefix}")
 
 
 def _funnel(facts, request, response, ran: int, report, written: list[Path], *, dry_run: bool = False) -> None:
@@ -268,9 +348,23 @@ def main() -> int:
     s.add_argument("--validate", type=int, default=0, help="cap on orders to run (0 = all)")
     s.add_argument("--out", type=Path, default=Path(".mo-eval") / "out")
     s.add_argument("--dry-run", action="store_true", help="stop after orders are issued; run nothing")
-    s.set_defaults(run=suite)
+    s.add_argument("--run", nargs="*", metavar="ROUTE", default=None,
+                   help="after validating, upload the bundles and ask the service to evaluate them on these model routes")
+    s.add_argument("--repeats", type=int, default=1)
+    s.set_defaults(command_fn=suite)
+    m = commands.add_parser("submit", help="upload an already-validated --out tree and ask the service to evaluate it")
+    m.add_argument("--out", required=True)
+    m.add_argument("--repo-name", required=True, help="owner/name the suite was mined from")
+    m.add_argument("--service", required=True)
+    m.add_argument("--token", default=None, help="bearer token, else $MO_EVAL_TOKEN")
+    m.add_argument("--run", nargs="+", metavar="ROUTE", required=True, help="model routes, one arm each")
+    m.add_argument("--repeats", type=int, default=1)
+    m.add_argument("--conventions-from", metavar="REPO", default=None,
+                   help="a checkout to collect convention sources from (contributing guide, lint config, review comments)")
+    m.add_argument("--history", type=int, default=120, help="merged pull requests to read review comments from")
+    m.set_defaults(command_fn=submit)
     arguments = parser.parse_args()
-    return arguments.run(arguments)
+    return arguments.command_fn(arguments)
 
 
 if __name__ == "__main__":

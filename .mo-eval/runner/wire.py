@@ -281,6 +281,74 @@ class VerdictReport:
     verdicts: list[OrderVerdict]
 
 
+# --- phase 5: handing validated bundles to the service's storage, and asking for a run ----------
+
+
+@dataclass(frozen=True)
+class UploadRequest:
+    """The runner naming the bundles it holds for one suite. The service answers with one presigned
+    PUT per bundle, so the bytes go to storage directly and never through the service itself."""
+
+    repo: str
+    suite_id: str
+    """Identifies this mining run of this repository; the runner chooses it (a timestamp + sha)."""
+    task_ids: list[str]
+
+
+@dataclass(frozen=True)
+class UploadTargets:
+    urls: dict[str, str]
+    """Presigned PUT URL per task id, short-lived."""
+    keys: dict[str, str]
+    """Where each bundle will live, so a run can name it."""
+
+
+@dataclass(frozen=True)
+class ReviewComment:
+    """One inline review comment a person left on a merged change — the repository's conventions,
+    stated in its own words at the moment they mattered."""
+
+    number: int
+    path: str
+    author: str
+    body: str
+
+
+@dataclass(frozen=True)
+class ConventionSources:
+    """What the conventions judge learns from: the repository's written rules and its review
+    history. Collected by the runner, distilled on the service's side."""
+
+    files: dict[str, str] = field(default_factory=dict)
+    """Contributing guide, PR template, lint and format configuration, agent instructions — by path."""
+    comments: list[ReviewComment] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class RunRequest:
+    """Ask the service to evaluate a suite: which arms, how many repeats. Recorded as a job; a lane
+    picks it up. The runner never talks to the lane."""
+
+    repo: str
+    suite_id: str
+    task_ids: list[str]
+    arms: list[str]
+    """Model routes, one arm each (`anthropic/claude-opus-5`, `momento/zai-org/GLM-5.3`)."""
+    repeats: int = 1
+    titles: dict[str, str] = field(default_factory=dict)
+    """Task id -> human title, carried so results can be read without the packages."""
+    conventions: ConventionSources | None = None
+    """Absent: correctness only, no conventions score."""
+
+
+@dataclass(frozen=True)
+class RunTicket:
+    run_id: str
+    job_key: str
+    results_prefix: str
+    """Where `cells.json` and the reports will appear when the lane is done."""
+
+
 # --- decoding ------------------------------------------------------------------------------------
 
 
