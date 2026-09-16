@@ -38,7 +38,6 @@ jobs:
 
       - uses: momentohq/mo-eval-action@v1
         with:
-          service: ${{ vars.MO_EVAL_SERVICE }}
           token: ${{ secrets.MO_EVAL_TOKEN }}
           history: ${{ inputs.history }}
           candidates: ${{ inputs.candidates }}
