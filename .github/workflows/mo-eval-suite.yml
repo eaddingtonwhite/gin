@@ -15,7 +15,7 @@ on:
         description: How many to request source for
         default: "12"
       arms:
-        description: Model routes to evaluate the suite on, space-separated (empty = build only)
+        description: Model routes to evaluate the suite on, space-separated; "none" builds the suite without running it
         default: "anthropic/claude-opus-5 momento/zai-org/GLM-5.3"
 
 permissions:
@@ -37,8 +37,12 @@ jobs:
           go-version-file: go.mod
 
       - name: mine and validate
-        run: python3 .mo-eval/runner/main.py suite --service "$MO_EVAL_SERVICE" --history "${{ inputs.history }}" --candidates "${{ inputs.candidates }}" --out .mo-eval/out \
-            ${{ inputs.arms && format('--run {0}', inputs.arms) || '' }}
+        # A block scalar: a folded plain scalar would turn the line continuation into a literal
+        # backslash-space, and the arms would reach the runner as one unrecognized argument.
+        run: |
+          python3 .mo-eval/runner/main.py suite --service "$MO_EVAL_SERVICE" \
+            --history "${{ inputs.history }}" --candidates "${{ inputs.candidates }}" --out .mo-eval/out \
+            ${{ inputs.arms != 'none' && format('--run {0}', inputs.arms) || '' }}
         env:
           MO_EVAL_SERVICE: ${{ vars.MO_EVAL_SERVICE }}
           MO_EVAL_TOKEN: ${{ secrets.MO_EVAL_TOKEN }}
