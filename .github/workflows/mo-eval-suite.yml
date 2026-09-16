@@ -8,6 +8,7 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  id-token: write   # the job authenticates to mo-eval as this repository; no secret to manage
 jobs:
   suite:
     runs-on: ubuntu-latest
@@ -20,5 +21,4 @@ jobs:
           go-version-file: go.mod
       - uses: momentohq/mo-eval-action@v1
         with:
-          token: ${{ secrets.MO_EVAL_TOKEN }}
           arms: ${{ inputs.arms }}
